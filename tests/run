@@ -1,0 +1,36 @@
+#!/bin/sh
+# The checks of the things plugin. Run from anywhere: tests/run
+#
+# Needs sh, jq and git. Uses shellcheck and claude when they run, and skips those parts
+# when they do not. Writes only to a temporary folder.
+set -u
+
+here="$(cd "$(dirname "$0")/.." && pwd)"
+hook="$here/hooks/things-hook"
+work="$(mktemp -d "${TMPDIR:-/tmp}/things-test.XXXXXX")"
+trap 'rm -rf "$work"' EXIT INT TERM
+
+passed=0
+failed=0
+ok() { passed=$((passed + 1)); echo "ok    $1"; }
+bad() { failed=$((failed + 1)); echo "FAIL  $1"; }
+skip() { echo "skip  $1"; }
+check() { # check "name" command...
+  name="$1"
+  shift
+  if "$@" > "$work/out" 2>&1; then ok "$name"; else bad "$name"; sed 's/^/      /' "$work/out"; fi
+}
+
+command -v jq > /dev/null 2>&1 || { echo "tests/run: jq is needed" >&2; exit 2; }
+
+# shellcheck source=tests/manifest.sh
+. "$here/tests/manifest.sh"
+# shellcheck source=tests/prose.sh
+. "$here/tests/prose.sh"
+# shellcheck source=tests/hook.sh
+. "$here/tests/hook.sh"
+# shellcheck source=tests/install.sh
+. "$here/tests/install.sh"
+
+echo "$passed passed, $failed failed"
+[ "$failed" -eq 0 ]

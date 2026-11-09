@@ -1,0 +1,10 @@
+{
+  "name": "things",
+  "version": "0.1.0",
+  "description": "While your session is idle, Claude tells you one thing you probably didn't know about your project.",
+  "author": { "name": "Oscillating Works", "url": "https://github.com/oscillatingworks" },
+  "homepage": "https://github.com/oscillatingworks/things",
+  "repository": "https://github.com/oscillatingworks/things",
+  "license": "MIT",
+  "keywords": ["learning", "idle", "facts", "onboarding"]
+}

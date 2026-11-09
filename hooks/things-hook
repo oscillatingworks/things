@@ -1,0 +1,227 @@
+#!/bin/sh
+# The hooks of the things plugin. Claude Code runs them with the hook input as JSON on stdin.
+#
+#   things-hook stop    A reply ended (Stop). Notes the facts told and whether the reply was a fact.
+#   things-hook prompt  The user sent a prompt (UserPromptSubmit). Cancels a waiting repeat.
+#   things-hook idle    The session is idle (Notification, idle_prompt, asyncRewake). Exits 2 with a
+#                       message on stderr to wake Claude for one fact, or 0 to stay quiet.
+#
+# The first fact of an idle period comes at the first idle_prompt after a normal reply (about 60
+# seconds). After a fact, the next idle_prompt waits in the background and wakes Claude again
+# THINGS_REPEAT minutes after that fact (default 15), at most THINGS_REPEAT_MAX times in a row
+# (default 8). A prompt or a normal reply cancels the wait and starts a new period.
+#
+# State lives in one folder per session under $CLAUDE_PLUGIN_DATA (or $XDG_STATE_HOME/things).
+# THINGS_IDLE=off turns every wake off, THINGS_REPEAT=off only the repeats. Without jq the hooks
+# do nothing.
+set -u
+
+heading="Things you probably didn't know about"
+# The idle hook's timeout in hooks/hooks.json is 7200 seconds: a wait must end before it.
+longest_wait=6900
+
+case "${1:-}" in
+  stop | prompt | idle) ;;
+  *)
+    echo "usage: things-hook stop|prompt|idle < hook-input.json" >&2
+    exit 64
+    ;;
+esac
+
+command -v jq > /dev/null 2>&1 || exit 0
+
+# The input must be exactly one JSON object. Anything else: do nothing.
+input="$(cat)"
+printf '%s' "$input" | jq -s -e 'length == 1 and (.[0] | type == "object")' > /dev/null 2>&1 || exit 0
+
+# The session id names a folder: accept only letters, digits, dashes and underscores (Claude Code
+# sends a UUID), never a path.
+session="$(printf '%s' "$input" | jq -r '.session_id // empty | strings')"
+case "$session" in
+  "" | *[!A-Za-z0-9_-]*) exit 0 ;;
+esac
+
+root="${CLAUDE_PLUGIN_DATA:-${XDG_STATE_HOME:-$HOME/.local/state}/things}"
+dir="$root/sessions/$session"
+mkdir -p "$dir" 2> /dev/null || exit 0
+# The folder's time is the session's last activity, which the cleanup in on_stop reads.
+touch "$dir"
+
+now() { date +%s; }
+
+is_off() {
+  case "$1" in
+    off | 0 | false | no) return 0 ;;
+  esac
+  return 1
+}
+
+# A whole number from a setting, or the default when the setting is not one. Leading zeroes go
+# (shell arithmetic reads 010 as octal). A value longer than 12 digits becomes 999999999999: room
+# for an epoch time, and small enough to multiply by 60 without an overflow.
+number() { # number VALUE DEFAULT
+  case "$1" in
+    "" | *[!0-9]*)
+      echo "$2"
+      return
+      ;;
+  esac
+  value="${1#"${1%%[!0]*}"}"
+  [ -n "$value" ] || value=0
+  [ "${#value}" -le 12 ] || value=999999999999
+  echo "$value"
+}
+
+# One hook at a time changes the state: a lock folder. A lock older than about five seconds is
+# from a hook that was killed, and is taken over.
+lock() {
+  tries=0
+  until mkdir "$dir/lock" 2> /dev/null; do
+    tries=$((tries + 1))
+    if [ "$tries" -ge 50 ]; then
+      rm -rf "$dir/lock"
+      tries=0
+    fi
+    sleep 0.1 2> /dev/null || sleep 1
+  done
+}
+unlock() { rmdir "$dir/lock" 2> /dev/null; }
+
+# The generation counts the events that end a wait: a reply, a prompt, a newer idle hook. A waiting
+# idle hook wakes Claude only while the generation is the one it started with. Call it locked.
+next_generation() {
+  generation=$(($(number "$(cat "$dir/generation" 2> /dev/null)" 0) % 999999 + 1))
+  echo "$generation" > "$dir/generation"
+}
+same_generation() { [ "$(cat "$dir/generation" 2> /dev/null)" = "$generation" ]; }
+
+# For the tests: with THINGS_TEST_PAUSE=POINT, the hook stops at POINT, writes paused-POINT, and
+# goes on when the test writes resume-POINT. Without it, nothing happens.
+checkpoint() {
+  [ "${THINGS_TEST_PAUSE:-}" = "$1" ] || return 0
+  touch "$dir/paused-$1"
+  until [ -e "$dir/resume-$1" ]; do sleep 0.1 2> /dev/null || sleep 1; done
+}
+
+project_name() {
+  cwd="$(printf '%s' "$input" | jq -r '.cwd // empty')"
+  [ -n "$cwd" ] || cwd="${CLAUDE_PROJECT_DIR:-$PWD}"
+  top="$(git -C "$cwd" rev-parse --show-toplevel 2> /dev/null)" || top="$cwd"
+  basename "$top"
+}
+
+# The fact in a reply: the first line with words after the heading line, without Markdown marks.
+fact_of() {
+  awk -v h="$heading" '
+    found && /[[:alnum:]]/ { print; exit }
+    index($0, h) { found = 1 }
+  ' | sed -e 's/^[[:space:]>*_#-]*//' -e 's/[[:space:]*_]*$//' | cut -c 1-400
+}
+
+on_stop() {
+  message="$(printf '%s' "$input" | jq -r '.last_assistant_message // empty')"
+  lock
+  # A reply ends any wait. The idle_prompt after this reply decides what comes next.
+  next_generation
+  if [ -e "$dir/pending" ] || printf '%s' "$message" | grep -qF "$heading"; then
+    # A fact, or the reply to our wake (whatever it says): the next idle waits for the repeat.
+    rm -f "$dir/pending"
+    touch "$dir/quiet"
+    now > "$dir/last-fact"
+  else
+    # Claude did other work: a new idle period, and the repeat count starts again.
+    rm -f "$dir/quiet" "$dir/repeats"
+  fi
+  unlock
+  if printf '%s' "$message" | grep -qF "$heading"; then
+    fact="$(printf '%s\n' "$message" | fact_of)"
+    [ -n "$fact" ] && printf '%s\n' "$fact" >> "$dir/told"
+  fi
+  # Forget sessions untouched for two weeks.
+  find "$root/sessions" -mindepth 1 -maxdepth 1 -type d -mtime +14 -exec rm -rf {} + 2> /dev/null
+  exit 0
+}
+
+on_prompt() {
+  lock
+  # Our own wake also runs UserPromptSubmit: it is not the user, so it must not reset the count.
+  # No idle hook waits while a wake is pending.
+  if [ ! -e "$dir/pending" ]; then
+    # The user is back: end a waiting repeat, and the repeat count starts again.
+    next_generation
+    rm -f "$dir/repeats"
+  fi
+  unlock
+  exit 0
+}
+
+# Claim the wake, locked: only when no reply or prompt came since this hook started. Then wake.
+wake() { # wake COUNT: COUNT is "repeat" for a repeat wake
+  checkpoint claim
+  lock
+  if ! same_generation; then
+    unlock
+    exit 0
+  fi
+  if [ "${1:-}" = repeat ]; then
+    echo $(($(number "$(cat "$dir/repeats" 2> /dev/null)" 0) + 1)) > "$dir/repeats"
+  fi
+  touch "$dir/pending"
+  unlock
+  name="$(project_name)"
+  {
+    echo "things: the session is idle. Use the things skill now: tell the user one fact about $name"
+    echo "that they probably do not know, under the heading \"$heading $name\"."
+    echo "Tell only the fact in this reply. Do not go on with other work, and change nothing."
+    if [ -s "$dir/told" ]; then
+      echo "Facts already told in this session (do not repeat them or tell them again in other words):"
+      tail -n 40 "$dir/told" | sed 's/^/- /'
+    fi
+  } >&2
+  exit 2
+}
+
+# Wait in the background until the repeat is due, then wake. Stop when the generation changes: a
+# reply, a prompt, or a newer idle hook.
+repeat() {
+  is_off "${THINGS_REPEAT:-15}" && exit 0
+  seconds=$(($(number "${THINGS_REPEAT:-15}" 15) * 60))
+  # THINGS_REPEAT_SECONDS is for the tests: the repeat in seconds.
+  [ -n "${THINGS_REPEAT_SECONDS:-}" ] && seconds="$(number "$THINGS_REPEAT_SECONDS" "$seconds")"
+  [ "$seconds" -gt 0 ] || exit 0
+  [ "$seconds" -le "$longest_wait" ] || seconds=$longest_wait
+  repeats="$(number "$(cat "$dir/repeats" 2> /dev/null)" 0)"
+  [ "$repeats" -lt "$(number "${THINGS_REPEAT_MAX:-8}" 8)" ] || exit 0
+
+  last="$(number "$(cat "$dir/last-fact" 2> /dev/null)" "$(now)")"
+  due=$((last + seconds))
+  step="$(number "${THINGS_TICK:-15}" 15)"
+  [ "$step" -gt 0 ] || step=1
+  while :; do
+    same_generation || exit 0
+    left=$((due - $(now)))
+    [ "$left" -gt 0 ] || break
+    if [ "$left" -lt "$step" ]; then sleep "$left"; else sleep "$step"; fi
+  done
+  wake repeat
+}
+
+on_idle() {
+  is_off "${THINGS_IDLE:-on}" && exit 0
+  # Take a generation first, before reading any state: a reply or a prompt from now on, even
+  # before the wait starts, cancels this hook. A newer idle hook cancels it too.
+  lock
+  next_generation
+  quiet=""
+  [ -e "$dir/quiet" ] && quiet=1
+  unlock
+  checkpoint started
+  [ -n "$quiet" ] && repeat
+  wake
+}
+
+case "$1" in
+  stop) on_stop ;;
+  prompt) on_prompt ;;
+  idle) on_idle ;;
+esac

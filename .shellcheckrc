@@ -1,0 +1,4 @@
+# The tests pass scripts to `sh -c '...'` on purpose: their variables expand in the inner shell.
+disable=SC2016
+external-sources=true
+source-path=SCRIPTDIR/..

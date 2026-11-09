@@ -1,0 +1,15 @@
+{
+  "name": "things",
+  "owner": { "name": "Oscillating Works", "url": "https://github.com/oscillatingworks" },
+  "metadata": {
+    "description": "The things plugin: one fact about your project while the session is idle"
+  },
+  "plugins": [
+    {
+      "name": "things",
+      "source": "./",
+      "description": "While your session is idle, Claude tells you one thing you probably didn't know about your project.",
+      "category": "learning"
+    }
+  ]
+}

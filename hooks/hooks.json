@@ -1,0 +1,40 @@
+{
+  "description": "Wakes Claude when the session is idle, to tell one fact about the project, and again every 15 minutes of idle time",
+  "hooks": {
+    "Notification": [
+      {
+        "matcher": "idle_prompt",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/things-hook\" idle",
+            "asyncRewake": true,
+            "timeout": 7200
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/things-hook\" stop",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/things-hook\" prompt",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
