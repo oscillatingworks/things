@@ -1,7 +1,7 @@
 # Sourced by tests/run: the hook script, fed the JSON that Claude Code sends.
 
 export CLAUDE_PLUGIN_DATA="$work/data"
-unset THINGS_IDLE THINGS_REPEAT_MAX THINGS_REPEAT_SECONDS
+unset THINGS_IDLE THINGS_REPEAT_SECONDS
 # The first part tests one idle period without the repeat. The repeat has its own part below.
 export THINGS_REPEAT=off THINGS_TICK=1
 
@@ -116,7 +116,6 @@ stop r1 "$fact_reply"
 timed_idle r1
 check "after a fact, idle waits for the repeat and then wakes" eval '[ "$code" -eq 2 ] && [ "$took" -ge 1 ]'
 check "the repeat wake lists the facts told" in_message "^- $fact"
-check "the repeat counts one" test "$(cat "$work/data/sessions/r1/repeats")" = 1
 
 stop r1 "$fact_reply"
 echo 0 > "$work/data/sessions/r1/last-fact"
@@ -143,19 +142,22 @@ sleep 1
 idle_in_background r4 newer
 check "a newer idle hook replaces an older one" eval '[ "$(code_of newer)" = 2 ] && [ "$(code_of older)" = 0 ]'
 
-stop r5 "$fact_reply"
-echo 2 > "$work/data/sessions/r5/repeats"
-check "THINGS_REPEAT_MAX stops the repeats" eval 'idle_input r5 | THINGS_REPEAT_MAX=2 "$hook" idle'
-stop r5 "Hello again."
-check "a normal reply resets the count" test ! -e "$work/data/sessions/r5/repeats"
-stop r5 "$fact_reply"
-echo 2 > "$work/data/sessions/r5/repeats"
-touch "$work/data/sessions/r5/pending"
+# No limit on the count: twelve repeats in a row all wake (each one already due).
+many_repeats() {
+  i=0
+  while [ "$i" -lt 12 ]; do
+    stop r5 "$fact_reply"
+    echo 0 > "$work/data/sessions/r5/last-fact"
+    idle_input r5 | "$hook" idle 2> /dev/null
+    [ $? -eq 2 ] || return 1
+    i=$((i + 1))
+  done
+}
+check "the repeats have no limit" many_repeats
+generation_before="$(cat "$work/data/sessions/r5/generation")"
 prompt r5
-check "the prompt of our own wake keeps the count" test "$(cat "$work/data/sessions/r5/repeats")" = 2
-rm "$work/data/sessions/r5/pending"
-prompt r5
-check "a prompt resets the count" test ! -e "$work/data/sessions/r5/repeats"
+check "the prompt of our own wake does not cancel anything" \
+  test "$(cat "$work/data/sessions/r5/generation")" = "$generation_before"
 
 stop r6 "$fact_reply"
 check "THINGS_REPEAT=off turns only the repeat off" eval 'idle_input r6 | THINGS_REPEAT=off "$hook" idle'

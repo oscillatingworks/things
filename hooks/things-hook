@@ -8,8 +8,8 @@
 #
 # The first fact of an idle period comes at the first idle_prompt after a normal reply (about 60
 # seconds). After a fact, the next idle_prompt waits in the background and wakes Claude again
-# THINGS_REPEAT minutes after that fact (default 15), at most THINGS_REPEAT_MAX times in a row
-# (default 8). A prompt or a normal reply cancels the wait and starts a new period.
+# THINGS_REPEAT minutes after that fact (default 30), with no limit on the count. A prompt or a
+# normal reply cancels the wait and starts a new period.
 #
 # State lives in one folder per session under $CLAUDE_PLUGIN_DATA (or $XDG_STATE_HOME/things).
 # THINGS_IDLE=off turns every wake off, THINGS_REPEAT=off only the repeats. Without jq the hooks
@@ -129,8 +129,8 @@ on_stop() {
     touch "$dir/quiet"
     now > "$dir/last-fact"
   else
-    # Claude did other work: a new idle period, and the repeat count starts again.
-    rm -f "$dir/quiet" "$dir/repeats"
+    # Claude did other work: a new idle period.
+    rm -f "$dir/quiet"
   fi
   unlock
   if printf '%s' "$message" | grep -qF "$heading"; then
@@ -144,27 +144,20 @@ on_stop() {
 
 on_prompt() {
   lock
-  # Our own wake also runs UserPromptSubmit: it is not the user, so it must not reset the count.
-  # No idle hook waits while a wake is pending.
-  if [ ! -e "$dir/pending" ]; then
-    # The user is back: end a waiting repeat, and the repeat count starts again.
-    next_generation
-    rm -f "$dir/repeats"
-  fi
+  # Our own wake also runs UserPromptSubmit. No idle hook waits while a wake is pending.
+  # The user is back: end a waiting repeat.
+  [ -e "$dir/pending" ] || next_generation
   unlock
   exit 0
 }
 
 # Claim the wake, locked: only when no reply or prompt came since this hook started. Then wake.
-wake() { # wake COUNT: COUNT is "repeat" for a repeat wake
+wake() {
   checkpoint claim
   lock
   if ! same_generation; then
     unlock
     exit 0
-  fi
-  if [ "${1:-}" = repeat ]; then
-    echo $(($(number "$(cat "$dir/repeats" 2> /dev/null)" 0) + 1)) > "$dir/repeats"
   fi
   touch "$dir/pending"
   unlock
@@ -184,14 +177,12 @@ wake() { # wake COUNT: COUNT is "repeat" for a repeat wake
 # Wait in the background until the repeat is due, then wake. Stop when the generation changes: a
 # reply, a prompt, or a newer idle hook.
 repeat() {
-  is_off "${THINGS_REPEAT:-15}" && exit 0
-  seconds=$(($(number "${THINGS_REPEAT:-15}" 15) * 60))
+  is_off "${THINGS_REPEAT:-30}" && exit 0
+  seconds=$(($(number "${THINGS_REPEAT:-30}" 30) * 60))
   # THINGS_REPEAT_SECONDS is for the tests: the repeat in seconds.
   [ -n "${THINGS_REPEAT_SECONDS:-}" ] && seconds="$(number "$THINGS_REPEAT_SECONDS" "$seconds")"
   [ "$seconds" -gt 0 ] || exit 0
   [ "$seconds" -le "$longest_wait" ] || seconds=$longest_wait
-  repeats="$(number "$(cat "$dir/repeats" 2> /dev/null)" 0)"
-  [ "$repeats" -lt "$(number "${THINGS_REPEAT_MAX:-8}" 8)" ] || exit 0
 
   last="$(number "$(cat "$dir/last-fact" 2> /dev/null)" "$(now)")"
   due=$((last + seconds))
@@ -203,7 +194,7 @@ repeat() {
     [ "$left" -gt 0 ] || break
     if [ "$left" -lt "$step" ]; then sleep "$left"; else sleep "$step"; fi
   done
-  wake repeat
+  wake
 }
 
 on_idle() {

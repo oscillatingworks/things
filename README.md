@@ -8,7 +8,7 @@
 
 You wait a lot: for a review, a build, a teammate. When your Claude Code session goes idle,
 things has Claude tell you one short fact about your project, with its source so you can check
-it. If you stay away, a new fact comes every 15 minutes.
+it. If you stay away, a new fact comes every 30 minutes.
 
 ```
 Things you probably didn't know about rounds
@@ -47,11 +47,11 @@ Set these in your environment, or in the `env` block of a Claude Code settings f
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| `THINGS_REPEAT` | `15` | Minutes between facts while you stay away. `off`: one fact per break. |
-| `THINGS_REPEAT_MAX` | `8` | The most repeats after the first fact, before things waits for you. |
+| `THINGS_REPEAT` | `30` | Minutes between facts while you stay away. `off`: one fact per break. |
 | `THINGS_IDLE` | `on` | `off`: no facts on their own. You can still ask. |
 
-Each fact costs one short Claude turn. With the defaults, two idle hours cost up to 9 turns.
+Each fact costs one short Claude turn. With the defaults, an idle hour costs up to 3 turns, and
+the facts go on until you come back. To pay for fewer turns, set a longer `THINGS_REPEAT`.
 
 ## More
 

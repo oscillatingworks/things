@@ -48,15 +48,14 @@ claude plugin list
 ## 5. Settings (only when the user asks)
 
 The defaults: a fact about a minute after Claude stops and the user has not typed, then one more
-every 15 minutes while the user stays away, at most 8 more. When the user asks for other values,
+every 30 minutes while the user stays away, with no limit. When the user asks for other values,
 add them to the `env` block of the settings file of the same scope
 (`.claude/settings.local.json`, `~/.claude/settings.json` or `.claude/settings.json`). Keep the
 other keys of that file:
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| `THINGS_REPEAT` | `15` | Minutes between facts while the user stays away (at most 115). `off`: one fact per break. |
-| `THINGS_REPEAT_MAX` | `8` | The most repeats after the first fact. |
+| `THINGS_REPEAT` | `30` | Minutes between facts while the user stays away (at most 115). `off`: one fact per break. |
 | `THINGS_IDLE` | `on` | `off`: no facts on their own. The user can still ask. |
 
 ## 6. Report
@@ -69,8 +68,8 @@ Tell the user, briefly:
 - what comes next: about a minute after Claude stops and they have not typed, Claude tells one
   fact about the project, with its source. They can also ask for one at any time: "tell me
   something I don't know about this repo";
-- that each fact costs one short Claude turn, and the setting that turns the repeat off
-  (`THINGS_REPEAT=off`);
+- that each fact costs one short Claude turn, that the facts go on every 30 minutes until they
+  come back, and the settings that change it (`THINGS_REPEAT=60`, or `THINGS_REPEAT=off`);
 - how to remove it:
   `claude plugin uninstall things@things --scope <scope>` and
   `claude plugin marketplace remove things --scope <scope>`.

@@ -1,5 +1,5 @@
 {
-  "description": "Wakes Claude when the session is idle, to tell one fact about the project, and again every 15 minutes of idle time",
+  "description": "Wakes Claude when the session is idle, to tell one fact about the project, and again every 30 minutes of idle time",
   "hooks": {
     "Notification": [
       {

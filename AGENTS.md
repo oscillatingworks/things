@@ -28,8 +28,8 @@ The plugin has a skill and three hooks.
 
 1. About 60 seconds after a normal reply (the user's turn, or Claude's when a background task
    ends), if the user has not typed, Claude tells the first fact.
-2. While the session stays idle, one more fact every `THINGS_REPEAT` minutes (15), at most
-   `THINGS_REPEAT_MAX` (8) more facts after the first one.
+2. While the session stays idle, one more fact every `THINGS_REPEAT` minutes (30), with no
+   limit on the count.
 3. A prompt, or a normal reply, stops the wait. The count starts again from step 1.
 
 Claude Code has no timer that a plugin can use. For the repeat, the idle hook that fires after a
@@ -39,13 +39,13 @@ the time comes.
 
 ### Limits
 
-- Each fact costs one model turn, with a few file reads.
+- Each fact costs one model turn, with a few file reads. The repeats have no limit: a session
+  left idle overnight gets a fact every `THINGS_REPEAT` minutes until the user comes back.
 - Claude Code does not send `idle_prompt` while a background agent (subagent) runs. A background
   shell command does not stop it.
 - No idle wakes in `claude -p` or other headless runs.
 - The facts are as good as the model's checks. The skill asks Claude to read the source of each
   fact and to give it.
-- When the user types while a wake is pending, the repeat count is not reset.
 - A prompt that ends before the idle hook process starts (the exact 60-second edge) does not
   cancel it. The Stop of that turn does, so a wake can come during a user turn only when that
   turn is longer than the repeat.
@@ -53,7 +53,7 @@ the time comes.
 ### State
 
 One folder per session under `$CLAUDE_PLUGIN_DATA/sessions/<session id>/` (or
-`$XDG_STATE_HOME/things`): `told` (the facts), `quiet`, `pending`, `last-fact`, `repeats`,
+`$XDG_STATE_HOME/things`): `told` (the facts), `quiet`, `pending`, `last-fact`,
 `generation`, and the `lock` folder. Sessions untouched for two weeks are removed.
 
 ## Install options

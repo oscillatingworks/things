@@ -32,7 +32,7 @@ for f in INSTALL.md install.sh; do
 done
 check "AGENTS.md sends an installing agent to INSTALL.md first" eval 'head -n 5 "$here/AGENTS.md" | grep -q "(INSTALL.md)"'
 check "the README gives the install prompt" grep -q "^> Set up things in this project: https://github.com/oscillatingworks/things" "$here/README.md"
-for setting in THINGS_REPEAT THINGS_REPEAT_MAX THINGS_IDLE; do
+for setting in THINGS_REPEAT THINGS_IDLE; do
   check "the hook, INSTALL.md and the README all know $setting" eval '
     grep -q "$setting" "$hook" && grep -q "| \`$setting\`" "$here/INSTALL.md" && grep -q "| \`$setting\`" "$here/README.md"'
 done
